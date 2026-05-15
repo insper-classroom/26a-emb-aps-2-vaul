@@ -28,8 +28,6 @@ O controle é um **martelo físico que já temos em posse**, simulando uma picar
 
 A interação central é: o jogador segura o controle como um martelo de verdade e faz o movimento de cima-para-baixo para minerar. Os botões resolvem ações discretas e o joystick controla a câmera.
 
-> O diagrama mecânico/sketch com a posição dos componentes está no Figma do projeto (link no final do README).
-
 ## 3. Inputs e Outputs
 
 ### Inputs
@@ -101,7 +99,7 @@ Comandos definidos:
 
 ## 6. Arquitetura de firmware (RTOS — alto nível)
 
-O firmware é estruturado em FreeRTOS, sem variáveis globais. A descrição detalhada está no diagrama de blocos no FigJam; abaixo o resumo das responsabilidades:
+O firmware é estruturado em FreeRTOS, sem variáveis globais. A descrição detalhada está no diagrama de blocos; abaixo o resumo das responsabilidades:
 
 ### Tasks
 
@@ -132,5 +130,6 @@ O firmware é estruturado em FreeRTOS, sem variáveis globais. A descrição det
 
 ## 7. Diagramas
 
-- **Diagrama de blocos do firmware (RTOS):** *link do FigJam a inserir*
-- **Diagrama mecânico do controle:** *link do FigJam a inserir*
+- **Diagrama de blocos do firmware (RTOS): 
+<img width="1147" height="786" alt="image" src="https://github.com/user-attachments/assets/09463d8f-72e3-410f-8d68-2f792c1a42a4" />
+

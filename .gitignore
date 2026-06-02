@@ -1,2 +1,19 @@
-build
-!.vscode/*
+# Artefatos de build (gerados ao compilar — nunca versionar)
+build/
+
+# Cache do Python
+__pycache__/
+*.pyc
+
+# Lixo do shell/SO
+*.stackdump
+
+# Config do VS Code / extensao Pico: contem caminhos absolutos da maquina
+# (C:\Users\<voce>\.pico-sdk\...). A extensao regenera ao abrir o projeto.
+.vscode/
+
+# OBS: ei-model/ (SDK + modelo do Edge Impulse) e FreeRTOS-Kernel/ SAO versionados
+# de proposito — sao necessarios para compilar o firmware. Nao ignorar.
+
+# Opcional (descomente se nao quiser versionar a porta COM/baud da sua maquina):
+# python/settings.json

@@ -497,7 +497,11 @@ class App:
         elif cmd == "PAUSE":
             ok = tap_key(SC_ESC)
         else:
-            return  # comando desconhecido -> ignora silenciosamente
+            # DIAG: mostra comandos desconhecidos (ex.: "AI:<gesto> <conf>" do
+            # debug da IA) em vez de ignorar, para validar que o gesture_task
+            # esta rodando e inferindo. Remover depois junto com o debug do firmware.
+            self.write_terminal(f"[ia] {line}", tag="info")
+            return
 
         if ok:
             self.write_terminal(f"[cmd] {line}", tag="sent")

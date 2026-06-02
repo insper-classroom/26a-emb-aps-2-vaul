@@ -11,6 +11,7 @@
 #include "hardware/irq.h"
 #include "hardware/pwm.h"
 #include "hardware/uart.h"
+#include "gesture.h"
 #include "hc06.h"
 #include "pico/stdlib.h"
 #include "ssd1306.h"
@@ -178,6 +179,12 @@ static void send_command(const char *s) {
     memcpy(msg.data, s, n);
     msg.len = (uint8_t)n;
     xQueueSend(xQueueTX, &msg, 0);
+}
+
+// Wrapper publico (linkagem C) para a ponte da IA (gesture.cpp) enviar comandos.
+// Passa pelo send_command, entao herda a guarda de macro e a gravacao em macro.
+void controller_send_command(const char *s) {
+    send_command(s);
 }
 
 // Botao embutido no joystick (pino SW). Solto = HIGH (pull-up interno);
@@ -437,7 +444,53 @@ static void oled_task(void* p) {
     }
 }
 
+// ===========================================================================
+// DIAGNOSTICO TEMPORARIO (remover depois): usa o LED do GP13 como "printf".
+// Como nao ha COM/debugger, cada modo de falha pisca um padrao diferente.
+//   - Pisca RAPIDO continuo (~80ms)      -> HARD FAULT (em qualquer lugar,
+//                                            inclusive construtor pre-main).
+//   - 2 piscadas + pausa, repetindo      -> ESTOURO DE PILHA (FreeRTOS pegou).
+// Lembrete do boot normal: o main() faz 1 piscada SOLIDA de 1s antes de iniciar
+// o escalonador. Se essa piscada de 1s aparecer, o main() foi alcancado.
+// ===========================================================================
+static void diag_led_forever(int blinks_per_group, uint32_t gap_ms) {
+    gpio_init(MACRO_LED_PIN);
+    gpio_set_dir(MACRO_LED_PIN, GPIO_OUT);
+    while (true) {
+        for (int i = 0; i < blinks_per_group; i++) {
+            gpio_put(MACRO_LED_PIN, 1);
+            busy_wait_ms(120);
+            gpio_put(MACRO_LED_PIN, 0);
+            busy_wait_ms(120);
+        }
+        busy_wait_ms(gap_ms);
+    }
+}
+
+// Override do handler de hard fault do Pico SDK (simbolo weak isr_hardfault).
+void isr_hardfault(void) {
+    diag_led_forever(1, 0);   // pisca rapido continuo
+}
+
+// Hook do FreeRTOS quando configCHECK_FOR_STACK_OVERFLOW != 0.
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+    (void)xTask;
+    (void)pcTaskName;
+    diag_led_forever(2, 700);  // 2 piscadas + pausa
+}
+
 int main(void) {
+    // DIAG: prova "main() ALCANCADO" como 1a coisa, antes de qualquer init.
+    // 3 piscadas rapidas aqui = chegou no main(). (clocks/timer ja sobem no crt0.)
+    gpio_init(MACRO_LED_PIN);
+    gpio_set_dir(MACRO_LED_PIN, GPIO_OUT);
+    for (int i = 0; i < 3; i++) {
+        gpio_put(MACRO_LED_PIN, 1);
+        busy_wait_ms(120);
+        gpio_put(MACRO_LED_PIN, 0);
+        busy_wait_ms(120);
+    }
+
     stdio_init_all();
 
     // inicializa uart e hc06
@@ -449,6 +502,10 @@ int main(void) {
     xQueueTX = xQueueCreate(32, sizeof(tx_msg_t));
     xQueuePin = xQueueCreate(1, 5 * sizeof(char));
 
+    // Indicador de boot (DIAG): pisca 1s SOLIDO = main() alcancado, construtores
+    // estaticos passaram. Inicializa o pino como saida para o pisca ser visivel.
+    gpio_init(MACRO_LED_PIN);
+    gpio_set_dir(MACRO_LED_PIN, GPIO_OUT);
     gpio_put(MACRO_LED_PIN, 1);
     sleep_ms(1000);
     gpio_put(MACRO_LED_PIN, 0);
@@ -460,6 +517,8 @@ int main(void) {
     xTaskCreate(macro_task, "MACRO", 512, NULL, 1, NULL);
     xTaskCreate(oled_task, "OLED", 1024, NULL, 1, NULL);
     xTaskCreate(joystick_task, "JOY", 512, NULL, 1, NULL);
+    // IA de gestos (MPU6050 + Edge Impulse): stack grande p/ a inferencia.
+    xTaskCreate(gesture_task, "GESTURE", 8192, NULL, 1, NULL);
 
     vTaskStartScheduler();
     while (true);

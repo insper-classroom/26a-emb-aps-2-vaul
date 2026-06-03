@@ -22,7 +22,12 @@
 #define BUTTON_PIN 10
 #define PAUSE_BTN_PIN 14
 #define MACRO_BTN_PIN 12
-#define MACRO_LED_PIN 13
+// LED RGB embutido no proprio botao do macro (1 componente, catodo comum).
+#define MACRO_LED_R_PIN 13   // vermelho (PWM)
+#define MACRO_LED_G_PIN 11   // verde   (PWM)
+#define MACRO_LED_B_PIN 16   // azul    (PWM)
+// anodo comum: LOW acende (PWM invertido). Catodo comum seria 1 (HIGH acende).
+#define MACRO_LED_ACTIVE_HIGH 0
 #define MACRO_MAX_EVENTS 4000   // ~20s @ 200 ev/s (.bss ~64KB; RP2350 tem 520KB)
 #define OLED_SDA_PIN 2
 #define OLED_SCL_PIN 3
@@ -297,6 +302,12 @@ static void joystick_task(void* p) {
 // Zera a velocidade da camera nos dois eixos. Como o PC segura a ultima
 // velocidade entre pacotes, sem isso a camera continuaria girando apos o
 // replay terminar/ser interrompido no meio de um movimento.
+// Converte um nivel 0..255 para o duty do PWM respeitando o tipo do LED:
+// catodo comum (HIGH acende) usa o valor direto; anodo comum inverte.
+static inline uint16_t macro_led_lvl(uint16_t v) {
+    return MACRO_LED_ACTIVE_HIGH ? v : (uint16_t)(255 - v);
+}
+
 static void macro_emit_stop(void) {
     for (uint8_t axis = 0; axis < 2; axis++) {
         tx_msg_t m;
@@ -319,14 +330,22 @@ static void macro_task(void* p) {
     gpio_set_dir(MACRO_BTN_PIN, GPIO_IN);
     gpio_pull_up(MACRO_BTN_PIN);
 
-    gpio_set_function(MACRO_LED_PIN, GPIO_FUNC_PWM);
-    uint slice = pwm_gpio_to_slice_num(MACRO_LED_PIN);
-    uint chan  = pwm_gpio_to_channel(MACRO_LED_PIN);
+    // PWM dos 3 canais do LED RGB embutido no botao.
+    gpio_set_function(MACRO_LED_R_PIN, GPIO_FUNC_PWM);
+    gpio_set_function(MACRO_LED_G_PIN, GPIO_FUNC_PWM);
+    gpio_set_function(MACRO_LED_B_PIN, GPIO_FUNC_PWM);
+    uint sr = pwm_gpio_to_slice_num(MACRO_LED_R_PIN), cr = pwm_gpio_to_channel(MACRO_LED_R_PIN);
+    uint sg = pwm_gpio_to_slice_num(MACRO_LED_G_PIN), cg = pwm_gpio_to_channel(MACRO_LED_G_PIN);
+    uint sb = pwm_gpio_to_slice_num(MACRO_LED_B_PIN), cb = pwm_gpio_to_channel(MACRO_LED_B_PIN);
     pwm_config cfg = pwm_get_default_config();
     pwm_config_set_clkdiv(&cfg, 4.0f);
     pwm_config_set_wrap(&cfg, 255);
-    pwm_init(slice, &cfg, true);
-    pwm_set_chan_level(slice, chan, 0);
+    pwm_init(sr, &cfg, true);
+    pwm_init(sg, &cfg, true);
+    pwm_init(sb, &cfg, true);
+    pwm_set_chan_level(sr, cr, macro_led_lvl(0));
+    pwm_set_chan_level(sg, cg, macro_led_lvl(0));
+    pwm_set_chan_level(sb, cb, macro_led_lvl(0));
 
     macro_state_t state = MACRO_EMPTY;
     bool was_pressed = false;
@@ -392,26 +411,27 @@ static void macro_task(void* p) {
             }
         }
 
-        // --- LED por estado ---
-        uint16_t duty = 0;
+        // --- LED RGB por estado ---
+        uint16_t r = 0, g = 0, b = 0;
         switch (state) {
-            case MACRO_EMPTY:
-                duty = 0;
+            case MACRO_EMPTY:                            // apagado
                 break;
-            case MACRO_RECORDING:
-                duty = (phase % 12 < 6) ? 255 : 0;   // pisca rapido (~8 Hz)
+            case MACRO_RECORDING:                        // vermelho pisca (~8 Hz)
+                r = (phase % 12 < 6) ? 255 : 0;
                 break;
-            case MACRO_READY:
-                fade += fade_dir;                    // fade lento (respirando)
+            case MACRO_READY:                            // verde respirando
+                fade += fade_dir;                        // fade lento
                 if (fade >= 255) { fade = 255; fade_dir = -fade_dir; }
                 else if (fade <= 0) { fade = 0; fade_dir = -fade_dir; }
-                duty = (uint16_t)fade;
+                g = (uint16_t)fade;
                 break;
-            case MACRO_PLAYING:
-                duty = 255;                          // aceso fixo
+            case MACRO_PLAYING:                          // azul aceso fixo
+                b = 255;
                 break;
         }
-        pwm_set_chan_level(slice, chan, duty);
+        pwm_set_chan_level(sr, cr, macro_led_lvl(r));
+        pwm_set_chan_level(sg, cg, macro_led_lvl(g));
+        pwm_set_chan_level(sb, cb, macro_led_lvl(b));
 
         phase++;
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -454,13 +474,13 @@ static void oled_task(void* p) {
 // o escalonador. Se essa piscada de 1s aparecer, o main() foi alcancado.
 // ===========================================================================
 static void diag_led_forever(int blinks_per_group, uint32_t gap_ms) {
-    gpio_init(MACRO_LED_PIN);
-    gpio_set_dir(MACRO_LED_PIN, GPIO_OUT);
+    gpio_init(MACRO_LED_R_PIN);
+    gpio_set_dir(MACRO_LED_R_PIN, GPIO_OUT);
     while (true) {
         for (int i = 0; i < blinks_per_group; i++) {
-            gpio_put(MACRO_LED_PIN, 1);
+            gpio_put(MACRO_LED_R_PIN, 1);
             busy_wait_ms(120);
-            gpio_put(MACRO_LED_PIN, 0);
+            gpio_put(MACRO_LED_R_PIN, 0);
             busy_wait_ms(120);
         }
         busy_wait_ms(gap_ms);
@@ -482,12 +502,12 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
 int main(void) {
     // DIAG: prova "main() ALCANCADO" como 1a coisa, antes de qualquer init.
     // 3 piscadas rapidas aqui = chegou no main(). (clocks/timer ja sobem no crt0.)
-    gpio_init(MACRO_LED_PIN);
-    gpio_set_dir(MACRO_LED_PIN, GPIO_OUT);
+    gpio_init(MACRO_LED_R_PIN);
+    gpio_set_dir(MACRO_LED_R_PIN, GPIO_OUT);
     for (int i = 0; i < 3; i++) {
-        gpio_put(MACRO_LED_PIN, 1);
+        gpio_put(MACRO_LED_R_PIN, 1);
         busy_wait_ms(120);
-        gpio_put(MACRO_LED_PIN, 0);
+        gpio_put(MACRO_LED_R_PIN, 0);
         busy_wait_ms(120);
     }
 
@@ -504,11 +524,11 @@ int main(void) {
 
     // Indicador de boot (DIAG): pisca 1s SOLIDO = main() alcancado, construtores
     // estaticos passaram. Inicializa o pino como saida para o pisca ser visivel.
-    gpio_init(MACRO_LED_PIN);
-    gpio_set_dir(MACRO_LED_PIN, GPIO_OUT);
-    gpio_put(MACRO_LED_PIN, 1);
+    gpio_init(MACRO_LED_R_PIN);
+    gpio_set_dir(MACRO_LED_R_PIN, GPIO_OUT);
+    gpio_put(MACRO_LED_R_PIN, 1);
     sleep_ms(1000);
-    gpio_put(MACRO_LED_PIN, 0);
+    gpio_put(MACRO_LED_R_PIN, 0);
 
     xTaskCreate(tx_task, "TX", 512, NULL, 2, NULL);
     xTaskCreate(button_task, "BTN", 512, NULL, 1, NULL);

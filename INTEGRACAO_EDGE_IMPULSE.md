@@ -109,32 +109,33 @@ Para você não perder tempo nas mesmas pistas falsas:
 
 ---
 
-## 6. Ajustes para o NOVO modelo ("down" em vez de "up", só esse gesto)
+## 6. Ajustes ao trocar de modelo (estado atual: Impulse #2, "porrada")
 
-O modelo atual tem as labels (em `ei-model/model-parameters/model_variables.h`):
+O modelo atual (`mdlask-project-1` Impulse #2, integrado em jun/2026) tem as labels
+(em `ei-model/model-parameters/model_variables.h`):
 
 ```c
-{ "idle", "updown", "wave" }   // índices 0, 1, 2
+{ "idle", "porrada" }   // índices 0, 1 — 100 Hz, 200 amostras × 3 eixos (600 floats)
 ```
 
 A `main/gesture.cpp` dispara o clique (`MINE`) quando o gesto vencedor é o de índice
-`LABEL_UPDOWN` (= 1) **e** a confiança ≥ `UPDOWN_CONFIDENCE` (= 0.6). Ao subir o novo modelo:
+`LABEL_PORRADA` (= 1) **e** a confiança ≥ `PORRADA_CONFIDENCE` (= 0.6). Ao subir um novo modelo:
 
 1. **Veja as labels novas** em `model_variables.h` (o array `ei_classifier_inferencing_categories_*`)
-   e descubra o **índice** do gesto que deve disparar o clique (ex.: se ficar `{ "idle", "down" }`,
-   o índice de `"down"` é **1**).
-2. **Atualize em `main/gesture.cpp`** (renomeie para clareza, ex.: `LABEL_DOWN`):
+   e descubra o **índice** do gesto que deve disparar o clique (no modelo atual,
+   `"porrada"` é o índice **1**).
+2. **Atualize em `main/gesture.cpp`** (renomeie para clareza, conforme o label):
    ```c
-   static const size_t LABEL_DOWN = 1;          // índice de "down" no modelo novo
-   static const float  DOWN_CONFIDENCE = 0.6f;  // ajuste a sensibilidade aqui
+   static const size_t LABEL_PORRADA = 1;          // índice do gesto no modelo
+   static const float  PORRADA_CONFIDENCE = 0.6f;  // ajuste a sensibilidade aqui
    ```
-   e a checagem do disparo (`best == LABEL_DOWN && ...value >= DOWN_CONFIDENCE`).
-3. **Sensibilidade:** ajuste `DOWN_CONFIDENCE` (menor = dispara mais fácil, mais falsos
+   e a checagem do disparo (`best == LABEL_PORRADA && ...value >= PORRADA_CONFIDENCE`).
+3. **Sensibilidade:** ajuste `PORRADA_CONFIDENCE` (menor = dispara mais fácil, mais falsos
    positivos; maior = mais exigente). O disparo é **por borda** (1 clique por gesto; só rearma
    quando sai do estado) — isso é intencional para "quebrar bloco a bloco".
-4. **Taxa de amostragem:** o código amostra a cada `pdMS_TO_TICKS(12)` (~83 Hz) para casar com
-   o `EI_CLASSIFIER_FREQUENCY = 85 Hz` do modelo atual. **Se você treinar em outra frequência,
-   ajuste `SAMPLE_PERIOD_TICKS`** em `gesture.cpp` para `1000 / nova_frequencia` ms.
+4. **Taxa de amostragem:** o código amostra a cada `pdMS_TO_TICKS(10)` (= 100 Hz) para casar
+   com o `EI_CLASSIFIER_FREQUENCY = 100 Hz` do modelo atual. **Se você treinar em outra
+   frequência, ajuste `SAMPLE_PERIOD_TICKS`** em `gesture.cpp` para `1000 / nova_frequencia` ms.
 5. **Escala dos dados:** o firmware alimenta o acelerômetro como **int16 cru** (`(float)accel[x]`),
    igual ao exemplo de referência. Treine no Edge Impulse com o **mesmo dado cru** (ex.: data
    forwarder enviando os valores raw do MPU). Se treinar em outra escala (g, m/s²), a inferência

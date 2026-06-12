@@ -59,11 +59,13 @@ Ainda **não** implementadas (planejadas no README): áudio PWM, bateria/LED RGB
 ## IA de gestos — `main/gesture.cpp` (Edge Impulse + MPU6050)
 
 O lab de IA (rede do Edge Impulse) vive em `ei-model/` (`edge-impulse-sdk/`,
-`model-parameters/`, `tflite-model/`). O modelo classifica 3 gestos —
-`idle`(0), `updown`(1), `wave`(2) — a partir de uma janela de **170 amostras × 3
-eixos do acelerômetro @ 85 Hz (~2 s por inferência)**. **Só `updown` interessa**:
-ele dispara `MINE\n` (= clique esquerdo = quebrar bloco). `idle`/`wave` são
-ignorados, e a lógica de **LED RGB do lab foi descartada** (a ação é o próprio clique).
+`model-parameters/`, `tflite-model/`). Modelo atual: `mdlask-project-1` Impulse #2
+(EON-compiled, int8). Classifica 2 gestos — `idle`(0), `porrada`(1) — a partir de
+uma janela de **200 amostras × 3 eixos do acelerômetro @ 100 Hz (~2 s por
+inferência)**, valores RAW do MPU6050. **Só `porrada` interessa** (= gesto de
+marretada): dispara `MINE\n` (= clique esquerdo = quebrar bloco) quando vence com
+confiança ≥ 0.6 (`LABEL_PORRADA`/`PORRADA_CONFIDENCE` em `gesture.cpp`). `idle` é
+ignorado, e a lógica de **LED RGB do lab foi descartada** (a ação é o próprio clique).
 Disparo por **borda**: 1 clique por gesto, rearma só quando sai do estado.
 
 **C vs C++ (importante):** o SDK do Edge Impulse é C++ (usa `std::function`,

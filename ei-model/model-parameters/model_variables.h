@@ -41,24 +41,22 @@
 
 #include <stdint.h>
 #include "model_metadata.h"
-#include "anomaly_metadata.h"
-#include "tflite-model/tflite_learn_1004163_3_compiled.h"
-#include "tflite-model/tflite_anomaly_1004163_5_compiled.h"
+#include "tflite-model/tflite_learn_1004163_9_compiled.h"
 #include "edge-impulse-sdk/classifier/ei_model_types.h"
 #include "edge-impulse-sdk/classifier/inferencing_engines/engines.h"
 #include "edge-impulse-sdk/classifier/postprocessing/ei_postprocessing_common.h"
 
-const char* ei_classifier_inferencing_categories_1004163_1[] = { "idle", "updown", "wave" };
+const char* ei_classifier_inferencing_categories_1004163_2[] = { "idle", "porrada" };
 
-EI_CLASSIFIER_DSP_AXES_INDEX_TYPE ei_dsp_config_1004163_2_axes[] = { 0, 1, 2 };
-const uint32_t ei_dsp_config_1004163_2_axes_size = 3;
-ei_dsp_config_spectral_analysis_t ei_dsp_config_1004163_2 = {
-    2, // uint32_t blockId
+EI_CLASSIFIER_DSP_AXES_INDEX_TYPE ei_dsp_config_1004163_7_axes[] = { 0, 1, 2 };
+const uint32_t ei_dsp_config_1004163_7_axes_size = 3;
+ei_dsp_config_spectral_analysis_t ei_dsp_config_1004163_7 = {
+    7, // uint32_t blockId
     4, // int implementationVersion
     3, // int length of axes
     1.0f, // float scale-axes
     1, // int input-decimation-ratio
-    "low", // select filter-type
+    "none", // select filter-type
     3.0f, // float filter-cutoff
     6, // int filter-order
     "FFT", // select analysis-type
@@ -69,168 +67,131 @@ ei_dsp_config_spectral_analysis_t ei_dsp_config_1004163_2 = {
     true, // boolean do-log
     true, // boolean do-fft-overlap
     1, // int wavelet-level
-    "rbio3.3", // select wavelet
+    "db4", // select wavelet
     false // boolean extra-low-freq
 };
 
-const uint8_t ei_dsp_blocks_1004163_1_size = 1;
-ei_model_dsp_t ei_dsp_blocks_1004163_1[ei_dsp_blocks_1004163_1_size] = {
-    { // DSP block 2
-        2,
-        18, // output size
+const uint8_t ei_dsp_blocks_1004163_2_size = 1;
+ei_model_dsp_t ei_dsp_blocks_1004163_2[ei_dsp_blocks_1004163_2_size] = {
+    { // DSP block 7
+        7,
+        39, // output size
         &extract_spectral_analysis_features, // DSP function pointer
-        (void*)&ei_dsp_config_1004163_2, // pointer to config struct
-        ei_dsp_config_1004163_2_axes, // array of offsets into the input stream, one for each axis
-        ei_dsp_config_1004163_2_axes_size, // number of axes
+        (void*)&ei_dsp_config_1004163_7, // pointer to config struct
+        ei_dsp_config_1004163_7_axes, // array of offsets into the input stream, one for each axis
+        ei_dsp_config_1004163_7_axes_size, // number of axes
         1, // version
         nullptr, // factory function
         nullptr, // data normalization config
     }
 };
-const ei_config_tflite_eon_graph_t ei_config_graph_1004163_3 = {
+const ei_config_tflite_eon_graph_t ei_config_graph_1004163_9 = {
     .implementation_version = 1,
-    .model_init = &tflite_learn_1004163_3_init,
-    .model_invoke = &tflite_learn_1004163_3_invoke,
-    .model_reset = &tflite_learn_1004163_3_reset,
-    .model_input = &tflite_learn_1004163_3_input,
-    .model_output = &tflite_learn_1004163_3_output,
+    .model_init = &tflite_learn_1004163_9_init,
+    .model_invoke = &tflite_learn_1004163_9_invoke,
+    .model_reset = &tflite_learn_1004163_9_reset,
+    .model_input = &tflite_learn_1004163_9_input,
+    .model_output = &tflite_learn_1004163_9_output,
 };
 
-const ei_config_tflite_eon_graph_t ei_config_graph_1004163_5 = {
+const uint8_t ei_output_tensors_indices_1004163_9[1] = { 0 };
+const uint8_t ei_output_tensors_size_1004163_9 = 1;
+ei_learning_block_config_tflite_graph_t ei_learning_block_config_1004163_9 = {
     .implementation_version = 1,
-    .model_init = &tflite_anomaly_1004163_5_init,
-    .model_invoke = &tflite_anomaly_1004163_5_invoke,
-    .model_reset = &tflite_anomaly_1004163_5_reset,
-    .model_input = &tflite_anomaly_1004163_5_input,
-    .model_output = &tflite_anomaly_1004163_5_output,
-};
-
-const uint8_t ei_output_tensors_indices_1004163_3[1] = { 0 };
-const uint8_t ei_output_tensors_size_1004163_3 = 1;
-ei_learning_block_config_tflite_graph_t ei_learning_block_config_1004163_3 = {
-    .implementation_version = 1,
-    .block_id = 3,
-    .output_tensors_indices = ei_output_tensors_indices_1004163_3,
-    .output_tensors_size = ei_output_tensors_size_1004163_3,
+    .block_id = 9,
+    .output_tensors_indices = ei_output_tensors_indices_1004163_9,
+    .output_tensors_size = ei_output_tensors_size_1004163_9,
     .quantized = 1,
     .compiled = 1,
-    .graph_config = (void*)&ei_config_graph_1004163_3,
+    .graph_config = (void*)&ei_config_graph_1004163_9,
     .dequantize_output = 0,
 };
 
-ei_learning_block_config_anomaly_gmm_t ei_learning_block_config_1004163_5 = {
-    .implementation_version = 1,
-    .block_id = 5,
-    .anom_axis = ei_classifier_anom_axes_1004163_5,
-    .anom_axes_size = 4,
-    .graph_config = (void*)&ei_config_graph_1004163_5
-};
-
-const uint8_t ei_learning_blocks_1004163_1_size = 2;
-const uint32_t ei_learning_block_1004163_3_inputs[1] = { 2 };
-const uint8_t ei_learning_block_1004163_3_inputs_size = 1;
-const uint32_t ei_learning_block_1004163_5_inputs[1] = { 2 };
-const uint8_t ei_learning_block_1004163_5_inputs_size = 1;
-const ei_learning_block_t ei_learning_blocks_1004163_1[ei_learning_blocks_1004163_1_size] = {
+const uint8_t ei_learning_blocks_1004163_2_size = 1;
+const uint32_t ei_learning_block_1004163_9_inputs[1] = { 7 };
+const uint8_t ei_learning_block_1004163_9_inputs_size = 1;
+const ei_learning_block_t ei_learning_blocks_1004163_2[ei_learning_blocks_1004163_2_size] = {
     {
-        3,
+        9,
         &run_nn_inference,
-        (void*)&ei_learning_block_config_1004163_3,
+        (void*)&ei_learning_block_config_1004163_9,
         EI_CLASSIFIER_IMAGE_SCALING_NONE,
-        ei_learning_block_1004163_3_inputs,
-        ei_learning_block_1004163_3_inputs_size,
-    },
-    {
-        5,
-        &run_gmm_anomaly,
-        (void*)&ei_learning_block_config_1004163_5,
-        EI_CLASSIFIER_IMAGE_SCALING_NONE,
-        ei_learning_block_1004163_5_inputs,
-        ei_learning_block_1004163_5_inputs_size,
+        ei_learning_block_1004163_9_inputs,
+        ei_learning_block_1004163_9_inputs_size,
     },
 };
 
-ei_fill_result_classification_i8_config_t ei_fill_result_classification_i8_config_1004163_3 = {
+ei_fill_result_classification_i8_config_t ei_fill_result_classification_i8_config_1004163_9 = {
     .zero_point = -128,
     .scale = 0.00390625
 };
 
-const size_t ei_postprocessing_blocks_1004163_1_size = 2;
-const ei_postprocessing_block_t ei_postprocessing_blocks_1004163_1[ei_postprocessing_blocks_1004163_1_size] = {
+const size_t ei_postprocessing_blocks_1004163_2_size = 1;
+const ei_postprocessing_block_t ei_postprocessing_blocks_1004163_2[ei_postprocessing_blocks_1004163_2_size] = {
     {
-        .block_id = 3,
+        .block_id = 9,
         .type = EI_CLASSIFIER_MODE_CLASSIFICATION,
         .init_fn = NULL,
         .deinit_fn = NULL,
         .postprocess_fn = &process_classification_i8,
         .display_fn = NULL,
-        .config = (void*)&ei_fill_result_classification_i8_config_1004163_3,
-        .input_block_id = 3
-    },
-    {
-        .block_id = 5,
-        .type = EI_CLASSIFIER_MODE_ANOMALY_GMM,
-        .init_fn = NULL,
-        .deinit_fn = NULL,
-        .postprocess_fn = &process_anomaly,
-        .display_fn = NULL,
-        .config = NULL,
-        .input_block_id = 5
+        .config = (void*)&ei_fill_result_classification_i8_config_1004163_9,
+        .input_block_id = 9
     },
 };
 
-const uint8_t freeform_outputs_1004163_1_size = 0;
+const uint8_t freeform_outputs_1004163_2_size = 0;
 
-uint32_t *freeform_outputs_1004163_1 = nullptr;
+uint32_t *freeform_outputs_1004163_2 = nullptr;
 
-const ei_impulse_t impulse_1004163_1 = {
+const ei_impulse_t impulse_1004163_2 = {
     .project_id = 1004163,
     .project_owner = "mdlask",
     .project_name = "mdlask-project-1",
-    .impulse_id = 1,
-    .impulse_name = "Impulse #1",
-    .deploy_version = 1,
+    .impulse_id = 2,
+    .impulse_name = "Impulse #2",
+    .deploy_version = 2,
 
-    .nn_input_frame_size = 18,
-    .raw_sample_count = 170,
+    .nn_input_frame_size = 39,
+    .raw_sample_count = 200,
     .raw_samples_per_frame = 3,
-    .dsp_input_frame_size = 170 * 3,
+    .dsp_input_frame_size = 200 * 3,
     .input_width = 0,
     .input_height = 0,
     .input_frames = 0,
-    .interval_ms = 11.764705882352942,
-    .frequency = 85,
+    .interval_ms = 10,
+    .frequency = 100,
 
-    .dsp_blocks_size = ei_dsp_blocks_1004163_1_size,
-    .dsp_blocks = ei_dsp_blocks_1004163_1,
+    .dsp_blocks_size = ei_dsp_blocks_1004163_2_size,
+    .dsp_blocks = ei_dsp_blocks_1004163_2,
 
-    .learning_blocks_size = ei_learning_blocks_1004163_1_size,
-    .learning_blocks = ei_learning_blocks_1004163_1,
+    .learning_blocks_size = ei_learning_blocks_1004163_2_size,
+    .learning_blocks = ei_learning_blocks_1004163_2,
 
-    .postprocessing_blocks_size = ei_postprocessing_blocks_1004163_1_size,
-    .postprocessing_blocks = ei_postprocessing_blocks_1004163_1,
+    .postprocessing_blocks_size = ei_postprocessing_blocks_1004163_2_size,
+    .postprocessing_blocks = ei_postprocessing_blocks_1004163_2,
 
-    .output_tensors_size = 2,
+    .output_tensors_size = 1,
 
     .inferencing_engine = EI_CLASSIFIER_TFLITE,
 
     .sensor = EI_CLASSIFIER_SENSOR_ACCELEROMETER,
     .fusion_string = "accX + accY + accZ",
-    .slice_size = (170/4),
+    .slice_size = (200/4),
     .slices_per_model_window = 4,
 
-    .has_anomaly = EI_ANOMALY_TYPE_GMM,
-    .label_count = 3,
-    .categories = ei_classifier_inferencing_categories_1004163_1,
+    .has_anomaly = EI_ANOMALY_TYPE_UNKNOWN,
+    .label_count = 2,
+    .categories = ei_classifier_inferencing_categories_1004163_2,
     .results_type = EI_CLASSIFIER_TYPE_CLASSIFICATION,
-    .freeform_outputs_size = freeform_outputs_1004163_1_size,
-    .freeform_outputs = freeform_outputs_1004163_1
+    .freeform_outputs_size = freeform_outputs_1004163_2_size,
+    .freeform_outputs = freeform_outputs_1004163_2
 };
 
-ei_impulse_handle_t impulse_handle_1004163_1 = ei_impulse_handle_t( &impulse_1004163_1 );
+ei_impulse_handle_t impulse_handle_1004163_2 = ei_impulse_handle_t( &impulse_1004163_2 );
 
-ei_impulse_handle_t& ei_default_impulse = impulse_handle_1004163_1;
-constexpr auto& ei_classifier_inferencing_categories = ei_classifier_inferencing_categories_1004163_1;
-const auto ei_dsp_blocks_size = ei_dsp_blocks_1004163_1_size;
-ei_model_dsp_t *ei_dsp_blocks = ei_dsp_blocks_1004163_1;
+ei_impulse_handle_t& ei_default_impulse = impulse_handle_1004163_2;
+constexpr auto& ei_classifier_inferencing_categories = ei_classifier_inferencing_categories_1004163_2;
+const auto ei_dsp_blocks_size = ei_dsp_blocks_1004163_2_size;
+ei_model_dsp_t *ei_dsp_blocks = ei_dsp_blocks_1004163_2;
 #endif // _EI_CLASSIFIER_MODEL_VARIABLES_H_

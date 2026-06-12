@@ -1,12 +1,12 @@
 // gesture.cpp - Ponte C++ entre o firmware (main.c) e a IA do Edge Impulse.
 //
 // Le o acelerometro do MPU6050 (i2c0), monta a janela de amostras, roda o
-// classificador treinado (idle / updown / wave) e, quando detecta "updown",
+// classificador treinado (idle / porrada) e, quando detecta "porrada",
 // envia "MINE\n" pela Bluetooth -> clique esquerdo no PC -> quebrar bloco.
 //
 // Adaptado de reference/ei_reference_main.cpp, com 3 simplificacoes:
 //   - Sem LED RGB: a acao e o proprio clique (ignoramos rgb_led).
-//   - So o gesto "updown" (indice 1) importa; "idle"/"wave" sao ignorados.
+//   - So o gesto "porrada" (indice 1) importa; "idle" e ignorado.
 //   - Disparo por borda: 1 clique por gesto, rearma so ao sair do estado.
 //
 // O Edge Impulse SDK e C++ (usa std::function, templates, namespaces) e nao
@@ -65,15 +65,15 @@ static const uint MPU_SDA_GPIO = 8;
 static const uint MPU_SCL_GPIO = 9;
 
 // Indice do gesto que dispara o clique (ver model_variables.h:
-// {"idle", "updown", "wave"} -> 0, 1, 2).
-static const size_t LABEL_UPDOWN = 1;
+// {"idle", "porrada"} -> 0, 1).
+static const size_t LABEL_PORRADA = 1;
 
 // Confianca minima para aceitar o gesto (alinhado ao EI_CLASSIFIER_THRESHOLD).
-static const float UPDOWN_CONFIDENCE = 0.6f;
+static const float PORRADA_CONFIDENCE = 0.6f;
 
-// Periodo de amostragem: modelo treinado a 85 Hz (~11.76 ms). Com tick do
-// FreeRTOS a 1 kHz a granularidade minima e 1 ms -> 12 ms ~= 83.3 Hz.
-static const TickType_t SAMPLE_PERIOD_TICKS = pdMS_TO_TICKS(12);
+// Periodo de amostragem: modelo treinado a 100 Hz (EI_CLASSIFIER_FREQUENCY).
+// Com tick do FreeRTOS a 1 kHz, 10 ms da exatamente 100 Hz.
+static const TickType_t SAMPLE_PERIOD_TICKS = pdMS_TO_TICKS(10);
 
 static void mpu6050_init(void) {
     i2c_init(MPU_I2C, 400 * 1000);
@@ -104,7 +104,7 @@ extern "C" void gesture_task(void *p) {
     mpu6050_init();
 
     int16_t accel[3];
-    bool prev_updown = false;  // estado anterior, para disparo por borda
+    bool prev_porrada = false;  // estado anterior, para disparo por borda
 
     while (true) {
         // 1) Coleta uma janela cheia (~2 s) de amostras de aceleracao.
@@ -167,14 +167,14 @@ extern "C" void gesture_task(void *p) {
                  pp);
         controller_send_command(dbg);
 
-        // 4) "updown" ativo = e o vencedor E passou do limiar de confianca.
-        bool updown = (best == LABEL_UPDOWN) &&
-                      (result.classification[LABEL_UPDOWN].value >= UPDOWN_CONFIDENCE);
+        // 4) "porrada" ativo = e o vencedor E passou do limiar de confianca.
+        bool porrada = (best == LABEL_PORRADA) &&
+                       (result.classification[LABEL_PORRADA].value >= PORRADA_CONFIDENCE);
 
         // 5) Disparo por borda: 1 clique por gesto; rearma so ao sair do estado.
-        if (updown && !prev_updown) {
+        if (porrada && !prev_porrada) {
             controller_send_command("MINE\n");
         }
-        prev_updown = updown;
+        prev_porrada = porrada;
     }
 }

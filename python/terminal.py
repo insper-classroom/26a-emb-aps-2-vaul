@@ -129,11 +129,18 @@ _BT_MAC_RE = re.compile(r"&([0-9A-Fa-f]{12})_")
 
 
 def find_hc06_port():
-    """Acha a porta COM 'outgoing' do HC-06 sem depender do numero da porta.
-    O Windows cria 2 COMs SPP: a outgoing (conecta no modulo) traz o MAC remoto
-    no hwid; a incoming local tem MAC 000000000000. Retorna (device, mac) da
-    primeira porta com MAC != zeros, ou (None, None)."""
-    for p in serial.tools.list_ports.comports():
+    """Acha a porta COM a conectar. Prioridade:
+    1) Pico DIRETO no USB (VID 2E8A da Raspberry Pi) -> debug sem Bluetooth;
+    2) HC-06 via Bluetooth: porta 'outgoing' SPP (o Windows cria 2 COMs SPP; a
+       outgoing traz o MAC remoto no hwid, a incoming local tem MAC zerado).
+    Retorna (device, mac/'USB-PICO') ou (None, None)."""
+    ports = list(serial.tools.list_ports.comports())
+    # 1) Pico via USB: o stream e espelhado na serial USB do proprio Pico.
+    for p in ports:
+        if "2E8A" in (p.hwid or "").upper():
+            return p.device, "USB-PICO"
+    # 2) HC-06 via Bluetooth (porta outgoing, MAC != zeros).
+    for p in ports:
         hwid = p.hwid or ""
         if "BTHENUM" not in hwid.upper():
             continue
@@ -245,8 +252,8 @@ class App:
         bottom = tk.Frame(outer, bg=BG)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
 
-        # Modo Controle ligado por padrao: ao conectar ja move o cursor / aciona
-        # teclas a partir do stream do martelo.
+        # Modo Controle ligado por padrao: demultiplexa o stream do martelo
+        # (parse de quadros de mouse + comandos ASCII) e os mostra no log.
         self.mouse_mode_var = tk.BooleanVar(value=True)
         self.chk_mouse = tk.Checkbutton(
             bottom, text="Controle", variable=self.mouse_mode_var,
@@ -255,6 +262,19 @@ class App:
             font=FONT_UI, cursor="hand2"
         )
         self.chk_mouse.pack(side=tk.LEFT)
+
+        # "Injetar no jogo" SEPARADO do "Controle": so quando ligado o programa
+        # move o cursor real e aciona teclas/cliques (SendInput). DESLIGADO por
+        # padrao -> modo Monitor: demultiplexa e LOGA tudo sem mexer no
+        # teclado/mouse do desktop (testar sem Minecraft, sem cliques fantasmas).
+        self.inject_var = tk.BooleanVar(value=False)
+        self.chk_inject = tk.Checkbutton(
+            bottom, text="Injetar no jogo", variable=self.inject_var,
+            bg=BG, fg=ACCENT, selectcolor=BG_TERMINAL,
+            activebackground=BG, activeforeground=ACCENT,
+            font=FONT_UI, cursor="hand2"
+        )
+        self.chk_inject.pack(side=tk.LEFT, padx=(8, 0))
 
         # Sensibilidade da camera (px por unidade-de-joystick por segundo).
         # Ajustavel em tempo real -- o "feel" certo so a mao do usuario acha.
@@ -339,6 +359,13 @@ class App:
         baud = int(self.baud_var.get())
         try:
             self.serial = serial.Serial(port, baud, timeout=0.1)
+            # Afirma DTR: o stdio USB do Pico so "conecta" (stdio_usb_connected)
+            # quando o host levanta o DTR -> sem isto o Pico nao espelha no USB.
+            # Inofensivo para a COM Bluetooth do HC-06.
+            try:
+                self.serial.dtr = True
+            except Exception:
+                pass
             self.running = True
             self._auto_enabled = True   # conexao ativa -> manter auto-reconect
             self._auto_warned = False
@@ -378,10 +405,11 @@ class App:
         dev, mac = find_hc06_port()
         if dev:
             self.port_var.set(dev)
-            self.write_terminal(f"[auto] HC-06 em {dev} (MAC {mac}) -> conectando", tag="info")
+            label = "Pico (USB)" if mac == "USB-PICO" else f"HC-06 (MAC {mac})"
+            self.write_terminal(f"[auto] {label} em {dev} -> conectando", tag="info")
             self.connect()
         elif not self._auto_warned:
-            self.write_terminal("[auto] procurando HC-06... ligue/pareie o modulo", tag="info")
+            self.write_terminal("[auto] procurando Pico (USB) ou HC-06... conecte o cabo ou pareie o modulo", tag="info")
             self._auto_warned = True
         if self._auto_enabled and not (self.serial and self.serial.is_open):
             self.root.after(3000, self._auto_connect)
@@ -465,10 +493,13 @@ class App:
             dt = now - last
             last = now
 
-            if self.mouse_mode_var.get():
+            # So move o cursor real se "Injetar no jogo" estiver ligado. No modo
+            # Monitor (injecao off) o stream e demultiplexado e logado, mas o
+            # cursor do desktop nao e tocado.
+            if self.mouse_mode_var.get() and self.inject_var.get():
                 vx, vy = self._vel[0], self._vel[1]
             else:
-                vx, vy = 0, 0  # fora do modo Controle, nao mexe o cursor
+                vx, vy = 0, 0
 
             self._mouse_accum[0] += vx * self._sens * dt
             self._mouse_accum[1] += vy * self._sens * dt
@@ -490,18 +521,37 @@ class App:
             return
         cmd, _, _arg = line.partition(":")
         cmd = cmd.upper()
+
+        # DIAG (remover depois): linhas de telemetria do firmware -> so logam.
+        #   AI:<gesto> <conf> pp<..>  -> predicao da IA
+        #   SW:ax.. up.. dn.. pk@.. tr@..  -> assinatura do swing (calibrar gate)
+        #   MACRO:REC/READY/PLAY/STOP/DONE/SELFTEST  -> FSM do macro
+        if cmd == "AI":
+            self.write_terminal(f"[ia] {line}", tag="info")
+            return
+        if cmd == "SW":
+            self.write_terminal(f"[swing] {line}", tag="info")
+            return
+        if cmd == "MACRO":
+            self.write_terminal(f"[macro] {line}", tag="sent")
+            return
+
+        # Comandos de acao. No modo Monitor (injecao off) apenas LOGA, sem mexer
+        # no teclado/mouse do desktop -> testar sem Minecraft e sem clique fantasma.
+        if cmd not in ("JUMP", "MINE", "PAUSE"):
+            self.write_terminal(f"[?] {line}", tag="info")  # desconhecido
+            return
+
+        if not self.inject_var.get():
+            self.write_terminal(f"[cmd] {line}  (monitor: nao injetado)", tag="sent")
+            return
+
         if cmd == "JUMP":
             ok = tap_key(SC_SPACE)
         elif cmd == "MINE":
             ok = left_click()
-        elif cmd == "PAUSE":
+        else:  # PAUSE
             ok = tap_key(SC_ESC)
-        else:
-            # DIAG: mostra comandos desconhecidos (ex.: "AI:<gesto> <conf>" do
-            # debug da IA) em vez de ignorar, para validar que o gesture_task
-            # esta rodando e inferindo. Remover depois junto com o debug do firmware.
-            self.write_terminal(f"[ia] {line}", tag="info")
-            return
 
         if ok:
             self.write_terminal(f"[cmd] {line}", tag="sent")

@@ -71,6 +71,19 @@ static const size_t LABEL_PORRADA = 1;
 // Confianca minima para aceitar o gesto (alinhado ao EI_CLASSIFIER_THRESHOLD).
 static const float PORRADA_CONFIDENCE = 0.6f;
 
+// --- Gate de swing por ENERGIA (workaround sem retreinar) -----------------------
+// Os dados ao vivo mostraram que o modelo do EI NAO e confiavel: classifica
+// "porrada 99%" em repouso (pp<2000) e "idle" em swings fortes. Entao o gatilho do
+// MINE passou a ser a ENERGIA do movimento -- o pico-a-pico (pp) do eixo dominante
+// na janela -- e nao o rotulo do modelo. So um movimento inteiro de porrada dispara.
+// CALIBRACAO (dados ao vivo): segurar parado pp ~530-1840; porrada inteira pp
+// ~12000-32000 (ja chegou a 65535 batendo forte). 9000 fica no meio do abismo.
+// AJUSTE AQUI: SUBA se mexer no controle jogando ainda disparar; ABAIXE se a
+// marretada de verdade nao pegar (veja os 'pp' no terminal: linhas SW:).
+static const int ENERGY_TH = 9000;
+// Tempo minimo entre dois cliques MINE (evita repetir dentro do mesmo gesto).
+static const TickType_t COOLDOWN_MS = 700;
+
 // Periodo de amostragem: modelo treinado a 100 Hz (EI_CLASSIFIER_FREQUENCY).
 // Com tick do FreeRTOS a 1 kHz, 10 ms da exatamente 100 Hz.
 static const TickType_t SAMPLE_PERIOD_TICKS = pdMS_TO_TICKS(10);
@@ -104,7 +117,8 @@ extern "C" void gesture_task(void *p) {
     mpu6050_init();
 
     int16_t accel[3];
-    bool prev_porrada = false;  // estado anterior, para disparo por borda
+    bool prev_strong = false;     // estado anterior do gate de energia (disparo por borda)
+    TickType_t last_fire = 0;     // tick do ultimo MINE (para o cooldown)
 
     while (true) {
         // 1) Coleta uma janela cheia (~2 s) de amostras de aceleracao.
@@ -115,6 +129,8 @@ extern "C" void gesture_task(void *p) {
         // pp grande mexendo => dado vivo (entao e questao de modelo/gesto).
         int16_t mn[3] = { 32767, 32767, 32767 };
         int16_t mx[3] = { -32768, -32768, -32768 };
+        int imn[3] = { 0, 0, 0 };   // indice da amostra do min de cada eixo
+        int imx[3] = { 0, 0, 0 };   // indice da amostra do max de cada eixo
 
         TickType_t last_wake = xTaskGetTickCount();
         for (size_t ix = 0; ix < EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE; ix += 3) {
@@ -122,16 +138,18 @@ extern "C" void gesture_task(void *p) {
             buffer[ix + 0] = (float)accel[0];
             buffer[ix + 1] = (float)accel[1];
             buffer[ix + 2] = (float)accel[2];
+            int sample = (int)(ix / 3);  // 0..199 dentro da janela
             for (int a = 0; a < 3; a++) {
-                if (accel[a] < mn[a]) mn[a] = accel[a];
-                if (accel[a] > mx[a]) mx[a] = accel[a];
+                if (accel[a] < mn[a]) { mn[a] = accel[a]; imn[a] = sample; }
+                if (accel[a] > mx[a]) { mx[a] = accel[a]; imx[a] = sample; }
             }
             vTaskDelayUntil(&last_wake, SAMPLE_PERIOD_TICKS);
         }
-        int pp = 0;  // maior pico-a-pico entre os 3 eixos
+        int pp = 0;       // maior pico-a-pico entre os 3 eixos
+        int dom_axis = 0; // eixo dominante (maior pico-a-pico) -> eixo do swing
         for (int a = 0; a < 3; a++) {
             int r = (int)mx[a] - (int)mn[a];
-            if (r > pp) pp = r;
+            if (r > pp) { pp = r; dom_axis = a; }
         }
 
         // 2) Roda o classificador sobre a janela.
@@ -160,21 +178,42 @@ extern "C" void gesture_task(void *p) {
         // DIAG (remover depois): transmite predicao + pico-a-pico do acelerometro
         // pela Bluetooth para validar a IA ao vivo no terminal.py.
         // Formato "AI:<label> <conf%> pp<pico-a-pico>".
-        char dbg[32];
+        char dbg[48];
         snprintf(dbg, sizeof(dbg), "AI:%s %d pp%d\n",
                  result.classification[best].label,
                  (int)(result.classification[best].value * 100.0f),
                  pp);
         controller_send_command(dbg);
 
-        // 4) "porrada" ativo = e o vencedor E passou do limiar de confianca.
-        bool porrada = (best == LABEL_PORRADA) &&
-                       (result.classification[LABEL_PORRADA].value >= PORRADA_CONFIDENCE);
+        // DIAG (remover depois): assinatura do swing no eixo dominante. Distingue
+        // "so subiu" (excursao de um lado so / pico e vale juntos) de "porrada
+        // completa" (sobe E desce, pico e vale separados no tempo). Formato:
+        //   SW:ax<a> up<max> dn<min> pk@<imax> tr@<imin>
+        // (up/dn em RAW do MPU; pk/tr = indice 0..199 da amostra do pico/vale).
+        // Calibra os limiares do gate de swing (Passo B).
+        // Voto do modelo (DIAG, NAO usado mais no gatilho): mantido so para comparar
+        // com a energia no log -- "m1" = modelo achou porrada, "m0" = nao.
+        bool model_porrada = (best == LABEL_PORRADA) &&
+                             (result.classification[LABEL_PORRADA].value >= PORRADA_CONFIDENCE);
 
-        // 5) Disparo por borda: 1 clique por gesto; rearma so ao sair do estado.
-        if (porrada && !prev_porrada) {
+        snprintf(dbg, sizeof(dbg), "SW:ax%d up%d dn%d pk@%d tr@%d m%d\n",
+                 dom_axis, (int)mx[dom_axis], (int)mn[dom_axis],
+                 imx[dom_axis], imn[dom_axis], model_porrada ? 1 : 0);
+        controller_send_command(dbg);
+
+        // 4) GATILHO POR ENERGIA (ver ENERGY_TH/COOLDOWN_MS). O rotulo do modelo e
+        // ignorado aqui (mostrou-se nao confiavel ao vivo): so a energia do swing
+        // dispara o clique.
+        bool strong = (pp >= ENERGY_TH);
+        TickType_t now = xTaskGetTickCount();
+
+        // 5) Disparo por borda + cooldown: 1 clique por swing; so rearma ao sair do
+        // estado "forte", e respeita o tempo minimo entre cliques.
+        if (strong && !prev_strong &&
+            (now - last_fire) >= pdMS_TO_TICKS(COOLDOWN_MS)) {
             controller_send_command("MINE\n");
+            last_fire = now;
         }
-        prev_porrada = porrada;
+        prev_strong = strong;
     }
 }

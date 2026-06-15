@@ -88,6 +88,12 @@ RECURSIVE_FIND_FILE(EI_MODEL "${MODEL_FOLDER}/tflite-model" "*.cpp")
 list(APPEND EI_SOURCES ${EI_CPP} ${EI_CC} ${EI_C} ${EI_S} ${EI_MODEL})
 target_sources(pico_emb PRIVATE ${EI_SOURCES})
 
+# DIAG (debug sem Bluetooth): habilita a porta serial USB do proprio Pico para
+# espelhar o stream (ver tx_task em main.c). Conecta o cabo USB e aponta o
+# terminal.py para a COM do Pico. UART0 stdio desligado (nao usamos GP0/GP1).
+pico_enable_stdio_usb(pico_emb 1)
+pico_enable_stdio_uart(pico_emb 0)
+
 pico_add_extra_outputs(pico_emb)
 
 set_target_properties(pico_emb PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

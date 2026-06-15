@@ -14,6 +14,7 @@
 #include "gesture.h"
 #include "hc06.h"
 #include "pico/stdlib.h"
+#include "pico/stdio_usb.h"   // stdio_usb_connected() p/ espelhar o stream no USB
 #include "ssd1306.h"
 
 #define HC06_NAME "ENZO-BLUETOOTH"
@@ -43,7 +44,7 @@
 // IA, etc.) enfileira um pacote inteiro de uma vez, evitando que os bytes de
 // um quadro se intercalem com os de outro na xQueueTX.
 typedef struct {
-    uint8_t data[24];
+    uint8_t data[48];   // 48 p/ caber linhas de diag (AI:/SW:/MACRO:) sem cortar o \n
     uint8_t len;
 } tx_msg_t;
 
@@ -118,6 +119,15 @@ static void tx_task(void* p) {
         if (xQueueReceive(xQueueTX, &msg, portMAX_DELAY) == pdTRUE) {
             for (int i = 0; i < msg.len; i++) {
                 uart_putc_raw(HC06_UART_ID, msg.data[i]);
+            }
+            // DIAG (debug sem Bluetooth): espelha o MESMO stream no USB. Assim da
+            // pra conectar o Pico direto no cabo USB e apontar o terminal.py pra
+            // COM do Pico -- ele demultiplexa identico ao da Bluetooth. Guardado por
+            // stdio_usb_connected() p/ nunca bloquear o tx_task quando nao ha host.
+            if (stdio_usb_connected()) {
+                for (int i = 0; i < msg.len; i++) {
+                    putchar_raw(msg.data[i]);
+                }
             }
             // Tap de gravacao do macro: consumidor unico do stream -> sem corrida.
             if (g_macro_recording && g_macro_count < MACRO_MAX_EVENTS && msg.len <= 8) {
@@ -308,6 +318,19 @@ static inline uint16_t macro_led_lvl(uint16_t v) {
     return MACRO_LED_ACTIVE_HIGH ? v : (uint16_t)(255 - v);
 }
 
+// DIAG (remover depois): manda uma linha ASCII de status do macro pela Bluetooth.
+// Vai DIRETO na xQueueTX (nao passa pela guarda g_macro_playing do send_command),
+// pois precisamos logar justamente a transicao que liga/desliga o replay. Como nao
+// e gravado? O tap do tx_task so grava len<=8, e estas linhas sao maiores.
+static void macro_diag(const char *s) {
+    tx_msg_t msg;
+    size_t n = strlen(s);
+    if (n > sizeof(msg.data)) n = sizeof(msg.data);
+    memcpy(msg.data, s, n);
+    msg.len = (uint8_t)n;
+    xQueueSend(xQueueTX, &msg, 0);
+}
+
 static void macro_emit_stop(void) {
     for (uint8_t axis = 0; axis < 2; axis++) {
         tx_msg_t m;
@@ -347,6 +370,22 @@ static void macro_task(void* p) {
     pwm_set_chan_level(sg, cg, macro_led_lvl(0));
     pwm_set_chan_level(sb, cb, macro_led_lvl(0));
 
+    // DIAG (remover depois): self-test RGB. Acende SO o canal R (~0.8s), depois SO o
+    // G, depois SO o B, com o mesmo valor "ligado" do resto do codigo. O usuario
+    // reporta qual COR FISICA apareceu em cada etapa -> isso fixa a fiacao e a
+    // polaridade do LED (resolve o "liga direto" sem chute). Manda MACRO:SELFTEST
+    // pela Bluetooth pra marcar o instante no log.
+    macro_diag("MACRO:SELFTEST R-G-B\n");
+    for (int step = 0; step < 3; step++) {
+        pwm_set_chan_level(sr, cr, macro_led_lvl(step == 0 ? 255 : 0));
+        pwm_set_chan_level(sg, cg, macro_led_lvl(step == 1 ? 255 : 0));
+        pwm_set_chan_level(sb, cb, macro_led_lvl(step == 2 ? 255 : 0));
+        vTaskDelay(pdMS_TO_TICKS(800));
+    }
+    pwm_set_chan_level(sr, cr, macro_led_lvl(0));
+    pwm_set_chan_level(sg, cg, macro_led_lvl(0));
+    pwm_set_chan_level(sb, cb, macro_led_lvl(0));
+
     macro_state_t state = MACRO_EMPTY;
     bool was_pressed = false;
     int play_idx = 0;
@@ -370,26 +409,34 @@ static void macro_task(void* p) {
 
         // --- FSM (clique tem prioridade sobre o avanco do replay) ---
         if (clicked) {
+            char dbg[32];
             switch (state) {
                 case MACRO_EMPTY:
                     g_macro_count = 0;
                     g_macro_rec_start = xTaskGetTickCount();
                     g_macro_recording = true;
                     state = MACRO_RECORDING;
+                    macro_diag("MACRO:REC\n");
                     break;
                 case MACRO_RECORDING:
                     g_macro_recording = false;  // para de gravar ANTES de ler count
                     state = (g_macro_count > 0) ? MACRO_READY : MACRO_EMPTY;
+                    snprintf(dbg, sizeof(dbg), "MACRO:%s n=%d\n",
+                             (g_macro_count > 0) ? "READY" : "EMPTY", g_macro_count);
+                    macro_diag(dbg);
                     break;
                 case MACRO_READY:
                     play_idx = 0;
                     play_start = xTaskGetTickCount();
-                    g_macro_playing = true;     // suprime input ao vivo
+                    snprintf(dbg, sizeof(dbg), "MACRO:PLAY n=%d\n", g_macro_count);
+                    macro_diag(dbg);            // ANTES de ligar o replay (a guarda
+                    g_macro_playing = true;     // so afetaria send_command, nao isto)
                     state = MACRO_PLAYING;
                     break;
                 case MACRO_PLAYING:
                     g_macro_playing = false;    // interrompe, MANTEM a gravacao
                     macro_emit_stop();
+                    macro_diag("MACRO:STOP\n");
                     state = MACRO_READY;
                     break;
             }
@@ -406,6 +453,7 @@ static void macro_task(void* p) {
             if (play_idx >= g_macro_count) {    // terminou naturalmente -> limpa
                 g_macro_playing = false;
                 macro_emit_stop();
+                macro_diag("MACRO:DONE\n");
                 g_macro_count = 0;
                 state = MACRO_EMPTY;
             }

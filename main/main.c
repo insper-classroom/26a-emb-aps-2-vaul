@@ -69,10 +69,18 @@ typedef struct {
 } macro_event_t;
 
 static macro_event_t g_macro_buf[MACRO_MAX_EVENTS];
-static volatile int g_macro_count = 0;
-static volatile bool g_macro_recording = false;
-static volatile bool g_macro_playing = false;
-static volatile TickType_t g_macro_rec_start = 0;
+
+// Estado do macro agrupado num struct (em vez de escalares soltos no escopo de
+// arquivo). RECORDING e PLAYING sao mutuamente exclusivos e o struct e tocado
+// por tx_task/macro_task/send_command -- mesma disciplina de exclusao logica de
+// antes, so que encapsulado.
+typedef struct {
+    int count;
+    bool recording;
+    bool playing;
+    TickType_t rec_start;
+} macro_ctrl_t;
+static volatile macro_ctrl_t g_macro = { 0, false, false, 0 };
 
 void uart_rx_handler() {
         uint8_t ch = uart_getc(HC06_UART_ID);
@@ -130,12 +138,12 @@ static void tx_task(void* p) {
                 }
             }
             // Tap de gravacao do macro: consumidor unico do stream -> sem corrida.
-            if (g_macro_recording && g_macro_count < MACRO_MAX_EVENTS && msg.len <= 8) {
-                macro_event_t *e = &g_macro_buf[g_macro_count];
+            if (g_macro.recording && g_macro.count < MACRO_MAX_EVENTS && msg.len <= 8) {
+                macro_event_t *e = &g_macro_buf[g_macro.count];
                 memcpy(e->data, msg.data, msg.len);
                 e->len = msg.len;
-                e->t_tick = xTaskGetTickCount() - g_macro_rec_start;
-                g_macro_count++;
+                e->t_tick = xTaskGetTickCount() - g_macro.rec_start;
+                g_macro.count++;
             }
         }
     }
@@ -175,7 +183,7 @@ static void button_task(void* p) {
 }
 
 static void joystick_send_axis(uint8_t axis, int16_t value) {
-    if (g_macro_playing) return;  // durante replay, nao mistura input ao vivo
+    if (g_macro.playing) return;  // durante replay, nao mistura input ao vivo
     tx_msg_t msg;
     msg.data[0] = 0xFF;
     msg.data[1] = axis;
@@ -187,7 +195,7 @@ static void joystick_send_axis(uint8_t axis, int16_t value) {
 
 // Enfileira uma mensagem ASCII (comando) inteira no stream Bluetooth.
 static void send_command(const char *s) {
-    if (g_macro_playing) return;  // durante replay, nao mistura input ao vivo
+    if (g_macro.playing) return;  // durante replay, nao mistura input ao vivo
     tx_msg_t msg;
     size_t n = strlen(s);
     if (n > sizeof(msg.data)) n = sizeof(msg.data);
@@ -319,7 +327,7 @@ static inline uint16_t macro_led_lvl(uint16_t v) {
 }
 
 // DIAG (remover depois): manda uma linha ASCII de status do macro pela Bluetooth.
-// Vai DIRETO na xQueueTX (nao passa pela guarda g_macro_playing do send_command),
+// Vai DIRETO na xQueueTX (nao passa pela guarda g_macro.playing do send_command),
 // pois precisamos logar justamente a transicao que liga/desliga o replay. Como nao
 // e gravado? O tap do tx_task so grava len<=8, e estas linhas sao maiores.
 static void macro_diag(const char *s) {
@@ -412,29 +420,29 @@ static void macro_task(void* p) {
             char dbg[32];
             switch (state) {
                 case MACRO_EMPTY:
-                    g_macro_count = 0;
-                    g_macro_rec_start = xTaskGetTickCount();
-                    g_macro_recording = true;
+                    g_macro.count = 0;
+                    g_macro.rec_start = xTaskGetTickCount();
+                    g_macro.recording = true;
                     state = MACRO_RECORDING;
                     macro_diag("MACRO:REC\n");
                     break;
                 case MACRO_RECORDING:
-                    g_macro_recording = false;  // para de gravar ANTES de ler count
-                    state = (g_macro_count > 0) ? MACRO_READY : MACRO_EMPTY;
+                    g_macro.recording = false;  // para de gravar ANTES de ler count
+                    state = (g_macro.count > 0) ? MACRO_READY : MACRO_EMPTY;
                     snprintf(dbg, sizeof(dbg), "MACRO:%s n=%d\n",
-                             (g_macro_count > 0) ? "READY" : "EMPTY", g_macro_count);
+                             (g_macro.count > 0) ? "READY" : "EMPTY", g_macro.count);
                     macro_diag(dbg);
                     break;
                 case MACRO_READY:
                     play_idx = 0;
                     play_start = xTaskGetTickCount();
-                    snprintf(dbg, sizeof(dbg), "MACRO:PLAY n=%d\n", g_macro_count);
+                    snprintf(dbg, sizeof(dbg), "MACRO:PLAY n=%d\n", g_macro.count);
                     macro_diag(dbg);            // ANTES de ligar o replay (a guarda
-                    g_macro_playing = true;     // so afetaria send_command, nao isto)
+                    g_macro.playing = true;     // so afetaria send_command, nao isto)
                     state = MACRO_PLAYING;
                     break;
                 case MACRO_PLAYING:
-                    g_macro_playing = false;    // interrompe, MANTEM a gravacao
+                    g_macro.playing = false;    // interrompe, MANTEM a gravacao
                     macro_emit_stop();
                     macro_diag("MACRO:STOP\n");
                     state = MACRO_READY;
@@ -443,18 +451,18 @@ static void macro_task(void* p) {
         } else if (state == MACRO_PLAYING) {
             // emite todos os eventos cujo tempo ja chegou
             TickType_t elapsed = xTaskGetTickCount() - play_start;
-            while (play_idx < g_macro_count && g_macro_buf[play_idx].t_tick <= elapsed) {
+            while (play_idx < g_macro.count && g_macro_buf[play_idx].t_tick <= elapsed) {
                 tx_msg_t m;
                 memcpy(m.data, g_macro_buf[play_idx].data, g_macro_buf[play_idx].len);
                 m.len = g_macro_buf[play_idx].len;
                 xQueueSend(xQueueTX, &m, 0);
                 play_idx++;
             }
-            if (play_idx >= g_macro_count) {    // terminou naturalmente -> limpa
-                g_macro_playing = false;
+            if (play_idx >= g_macro.count) {    // terminou naturalmente -> limpa
+                g_macro.playing = false;
                 macro_emit_stop();
                 macro_diag("MACRO:DONE\n");
-                g_macro_count = 0;
+                g_macro.count = 0;
                 state = MACRO_EMPTY;
             }
         }
